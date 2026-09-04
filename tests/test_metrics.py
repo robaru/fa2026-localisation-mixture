@@ -59,16 +59,16 @@ def test_get_metric_metadata_unknown():
 
 def test_localization_error_input_validation(grid_targets):
     with pytest.raises(TypeError):
-        localization_error(np.zeros((3, 3)), np.zeros((3, 3)), 'rmsL')
+        localization_error(np.zeros((3, 3)), np.zeros((3, 3)), 'rmsPmedianlocal')
     with pytest.raises(ValueError):
-        localization_error(grid_targets, coords([0.0], [0.0]), 'rmsL')
+        localization_error(grid_targets, coords([0.0], [0.0]), 'rmsPmedianlocal')
     with pytest.raises(ValueError):
         localization_error(grid_targets, grid_targets, 'no_such_metric')
 
 
 def test_localization_error_unknown_kwarg_warns(grid_targets):
     with pytest.warns(UserWarning):
-        value = localization_error(grid_targets, grid_targets, 'rmsL', bogus=1)
+        value = localization_error(grid_targets, grid_targets, 'rmsPmedianlocal', bogus=1)
     assert value == pytest.approx(0.0, abs=1e-9)
 
 
@@ -79,9 +79,7 @@ def test_localization_error_custom_callable(grid_targets):
         == 2 * grid_targets.cshape[0]
 
 
-@pytest.mark.parametrize('metric', ['rmsL', 'rmsPmedianlocal', 'angular_error',
-                                    'rmsEle', 'sdPol', 'sdLat', 'accL_cutoff',
-                                    'accP_cutoff'])
+@pytest.mark.parametrize('metric', ['rmsPmedianlocal', 'accP_cutoff'])
 def test_perfect_response_gives_zero(grid_targets, metric):
     assert localization_error(grid_targets, grid_targets, metric) \
         == pytest.approx(0.0, abs=1e-9)
@@ -96,7 +94,7 @@ def test_perfect_response_no_quadrant_errors(grid_targets):
 
 
 def test_metric_without_aux_returns_empty_dict(grid_targets):
-    value, aux = localization_error(grid_targets, grid_targets, 'rmsL',
+    value, aux = localization_error(grid_targets, grid_targets, 'rmsPmedianlocal',
                                     auxiliary_output=True)
     assert value == pytest.approx(0.0, abs=1e-9) and aux == {}
 

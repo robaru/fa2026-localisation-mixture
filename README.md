@@ -52,6 +52,9 @@ pytest                                  # optional, a few seconds
 Python 3.11 or newer. The code is two plain modules, `bayesian_metric.py`
 (the mixture model) and `metrics.py` (the metric registry and the classical
 metrics), so run scripts and notebooks from the repository root.
+`metrics.py` is borrowed from the
+[bayesian_listener](https://github.com/robaru/bayesian_listener) package and
+trimmed to the metrics used in this repository.
 
 ## Quickstart
 
@@ -107,15 +110,13 @@ describe_metrics()                  # print every registered metric
 | `rmsPmedianlocal` | horizontal-polar | rad | Local polar RMS error: lateral within ±30°, polar error < 90° (Middlebrooks 1999) |
 | `gainP` | horizontal-polar | – | Polar gain via the selective iterative regression procedure (Macpherson and Middlebrooks 2000) |
 | `accP_cutoff` | horizontal-polar | rad | Polar bias (mean signed error) for lateral responses within ±`cutoff` (default 30°) |
-| `rmsL` | horizontal-polar | rad | Lateral RMS error within ±60° lateral (Middlebrooks 1999) |
-| `accL_cutoff` | horizontal-polar | rad | Lateral bias (mean signed error) within ±`cutoff` |
-| `sdLat` | horizontal-polar | deg | Standard deviation of lateral errors |
-| `sdPol` | horizontal-polar | deg | cos²-weighted polar RMS error after folding front/back confusions |
-| `rmsEle` | spherical | rad | Elevation RMS error |
-| `angular_error` | cartesian | rad | Mean great-circle error |
 
-You can also pass your own callable to `localization_error`, or register a
-new metric with the `@register_metric` decorator.
+These are the metrics used in the paper. The upstream
+[bayesian_listener](https://github.com/robaru/bayesian_listener) package
+provides the complete set (lateral error and bias, elevation error,
+great-circle error, and more) behind the same registry. You can also pass
+your own callable to `localization_error`, or register a new metric with the
+`@register_metric` decorator.
 
 ## Reproducing the paper
 

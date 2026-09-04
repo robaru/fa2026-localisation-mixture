@@ -1,6 +1,12 @@
 """
-This module contains functions to compute localization errors based on a set
-of target and response directions.
+Localization-error metrics and the metric registry.
+
+This module is borrowed from the ``bayesian_listener`` package
+(https://github.com/robaru/bayesian_listener, file
+``bayesian_listener/metrics.py``) and trimmed to the metrics used in this
+repository: the classical median-plane metrics the paper compares against
+(quadrant error rate, local polar RMS error, polar bias, polar gain) and the
+von Mises mixture model. The full set of metrics is available upstream.
 """
 import functools
 import inspect
@@ -70,7 +76,7 @@ def localization_error(targets, estimations, metric,
     Registered metric with extra kwarg:
 
     >>> error = localization_error(targets, estimations,
-    ...                            'accL_cutoff',
+    ...                            'accP_cutoff',
     ...                            cutoff=np.deg2rad(30))
 
     Registered metric with auxiliary output:
@@ -273,64 +279,6 @@ def describe_metrics(name=None):
 
 # -----------------------------------------------------------------------------
 # Metric Functions
-@register_metric(
-    name="rmsL",
-    coord_convention="horizontal-polar",
-    input_unit="radians",
-    output_unit="radians",
-    description=(
-        "Lateral RMS error (in radians).\n\t"
-        "RMS of the difference between response and target lateral angles\n\t"
-        "within ±60° lateral.\n\t"
-        "See rms lateral error in Middlebrooks (1999)"),
-    ylabel="Lateral RMS error (rad)",
-)
-def rmsL(true, est):
-    """
-    Compute lateral RMS error within ±60° lateral.
-    More details in the decorator above.
-    """
-    # lateral in [-π, π), then restrict to [-π/2, π/2]
-    lat_true = wrap_to_pi(true[..., 0])
-    lat_true = np.clip(lat_true, -np.pi/2, np.pi/2) # enforce [-π/2, π/2]
-
-    lat_est = wrap_to_pi(est[..., 0])
-    lat_est = np.clip(lat_est, -np.pi/2, np.pi/2)
-
-    mask = np.abs(lat_est) <= np.deg2rad(60)
-    if not np.any(mask):
-        return np.nan
-
-    diff = wrap_to_pi(lat_est - lat_true)[mask]
-    return np.sqrt(np.mean(diff ** 2))
-
-
-@register_metric(
-    name="accL_cutoff",
-    coord_convention="horizontal-polar",
-    input_unit="radians",
-    output_unit="radians",
-    description=(
-        "Lateral bias (mean signed error) within ±cutoff° lateral.\n\t"
-        "Mean of the signed difference between response and target lateral angles\n\t"
-        "within ±cutoff° lateral. Cutoff defaults to 180° (π radians)."
-    ),
-    ylabel="Lateral bias (rad)",
-)
-def accL_cutoff(true, est, cutoff=np.pi):
-    """
-    Compute lateral bias (mean signed error) within ±cutoff° lateral.
-    More details in the decorator above.
-    """
-    lat_true = wrap_to_pi(true[..., 0])
-    lat_est = wrap_to_pi(est[..., 0])
-    mask = np.abs(lat_true) <= cutoff
-    if not np.any(mask):
-        return np.nan
-    diff = wrap_to_pi(lat_est - lat_true)[mask]
-    return np.mean(diff)
-
-
 @register_metric(
     name="accP_cutoff",
     coord_convention="horizontal-polar",
@@ -570,34 +518,6 @@ def gainP(true, est, lat_cutoff_deg=30.0, delta=40.0, Nmin=5, maxiter=100):
 
 
 @register_metric(
-    name='angular_error',
-    coord_convention='cartesian',
-    input_unit='meters',
-    output_unit='radians',
-    description=(
-        "Great-circle angular error (in radians).\n\t"
-        "Computed as arccos of the dot product between target and estimation\n\t"
-        "unit vectors. Returns the mean angular error across all observations."),
-    ylabel="Angular error (rad)",
-)
-def angular_error(true, est):
-    """
-    Compute mean great-circle angular error between target and estimation
-    unit vectors.  More details in the decorator above.
-    """
-    true = np.asarray(true, dtype=float)
-    est = np.asarray(est, dtype=float)
-    true = true / np.linalg.norm(true, axis=-1, keepdims=True)
-    est = est / np.linalg.norm(est, axis=-1, keepdims=True)
-
-    # Dot product row-wise, clipped to [-1, 1] for numerical safety
-    dots = np.sum(true * est, axis=-1)
-    dots = np.clip(dots, -1.0, 1.0)
-    angles = np.arccos(dots)
-    return np.mean(angles)
-
-
-@register_metric(
     name='mixture_model',
     coord_convention='horizontal-polar',
     input_unit='radians',
@@ -666,116 +586,3 @@ def mixture_model(true, est, use_prior=True, lat_cutoff_deg=30.0):
     value = np.array([fit['w_hat'], fit['sigma_hat'], fit['sigma_prior_hat']])
     aux   = {'nll': fit['nll'], 'bic': bic, 'n_trials': n}
     return value, aux
-
-@register_metric(
-    name="rmsEle",
-    coord_convention="spherical",
-    input_unit="radians",
-    output_unit="radians",
-    description=(
-        "Elevation RMS error (in radians).\n\t"
-        "Root mean square of the difference between response and target "
-        "elevation angles.\n\t"
-        "Angles are wrapped to the [-π, π) range before computing the error."
-    ),
-    ylabel="Elevation RMS error (rad)",
-)
-def rmsEle(true, est):
-    """
-    Compute RMS elevation error in spherical coordinates.
-
-    Assumes:
-    - true[..., 1] = elevation (radians)
-    - est[..., 1]  = elevation (radians)
-    """
-    # Extract elevation
-    ele_true = true[..., 1]
-    ele_est = est[..., 1]
-
-    # Wrap difference to [-π, π)
-    diff = wrap_to_pi(ele_est - ele_true)
-
-    # RMS
-    return np.sqrt(np.mean(diff**2))
-
-@register_metric(
-    name="sdPol",
-    coord_convention="horizontal-polar",
-    input_unit="radians",
-    output_unit="degrees",
-    description=(
-        "Lateral-weighted RMS of polar errors after mirroring front/back confusions.\n\t"
-        "Confusions (|error| ≥ 90°) are folded back via φ_r* = π − φ_r.\n\t"
-        "All trials contribute with cosine-squared lateral weighting.\n\t"
-        "Returns RMS in degrees."
-    ),
-    ylabel="Weighted polar RMS error (deg)",
-)
-def sdPol(true, est):
-    """
-    Compute lateral-weighted RMS polar error with confusion mirroring.
-
-    Assumes:
-    - true[..., 0] = lateral (rad)
-    - true[..., 1] = polar (rad)
-    - est[..., 1]  = polar (rad)
-    """
-    lat_rad = wrap_to_pi(true[..., 0])
-    pol_targ_rad = true[..., 1]
-    pol_resp_rad = est[..., 1]
-
-    # Wrap initial error to [-π, π)
-    err = wrap_to_pi(pol_resp_rad - pol_targ_rad)
-
-    # Identify confusions (|err| ≥ 90°)
-    confused = np.abs(err) >= (np.pi / 2)
-
-    # Mirror responses for confused trials
-    pol_resp_corr = pol_resp_rad.copy()
-    pol_resp_corr[confused] = np.pi - pol_resp_rad[confused]
-
-    # Recompute corrected error
-    err_corr = wrap_to_pi(pol_resp_corr - pol_targ_rad)
-
-    # Cos² weighting by lateral angle
-    w = np.cos(lat_rad) ** 2
-    denom = np.sum(w)
-
-    if denom <= 1e-10:
-        return np.nan
-
-    rms = np.sqrt(np.dot(w, err_corr**2) / denom)
-    return float(np.rad2deg(rms))
-
-
-@register_metric(
-    name="sdLat",
-    coord_convention="horizontal-polar",
-    input_unit="radians",
-    output_unit="degrees",
-    description=(
-        "Standard deviation of lateral errors.\n\t"
-        "Computed on wrapped angular differences (−π, π].\n\t"
-        "Von Mises assumption holds well as κ_L is typically large.\n\t"
-        "Returns standard deviation in degrees."
-    ),
-    ylabel="Lateral SD (deg)",
-)
-def sdLat(true, est):
-    """
-    Compute standard deviation of lateral angular error.
-
-    Assumes:
-    - true[..., 0] = lateral (rad)
-    - est[..., 0]  = lateral (rad)
-    """
-    lat_targ_rad = wrap_to_pi(true[..., 0])
-    lat_resp_rad = wrap_to_pi(est[..., 0])
-
-    # Wrapped error
-    err = wrap_to_pi(lat_resp_rad - lat_targ_rad)
-
-    if err.size < 5:
-        return np.nan
-
-    return float(np.rad2deg(np.std(err)))
