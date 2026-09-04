@@ -1,0 +1,42 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the conference paper below."
+type: software
+title: "fa2026-localisation-mixture: a von Mises mixture model for evaluating median-plane sound localisation"
+authors:
+  - family-names: Sztandera
+    given-names: Jakub
+    affiliation: "Dyson School of Design Engineering, Imperial College London"
+  - family-names: Picinali
+    given-names: Lorenzo
+    affiliation: "Dyson School of Design Engineering, Imperial College London"
+  - family-names: Barumerli
+    given-names: Roberto
+    affiliation: "Dyson School of Design Engineering, Imperial College London"
+repository-code: "https://github.com/robaru/fa2026-localisation-mixture"
+license: GPL-3.0
+version: 0.1.0
+date-released: "2026-09-08"
+keywords:
+  - sound localisation
+  - head-related transfer function
+  - localisation metric
+  - mixture model
+  - von Mises distribution
+preferred-citation:
+  type: conference-paper
+  title: "A Probabilistic Mixture Model for Evaluating Sound Localisation Performance in the Median Plane"
+  authors:
+    - family-names: Sztandera
+      given-names: Jakub
+    - family-names: Picinali
+      given-names: Lorenzo
+    - family-names: Barumerli
+      given-names: Roberto
+  collection-title: "Proceedings of Forum Acusticum 2026"
+  conference:
+    name: "Forum Acusticum 2026"
+    city: Graz
+    country: AT
+  year: 2026
+  # TODO: add the DOI once the proceedings are published
+  # doi: 10.xxxx/xxxxx

@@ -1,0 +1,13 @@
+# Runtime
+numpy==2.3.4
+scipy==1.17.1
+pandas==2.3.3
+pyfar==0.8.0
+pybads==1.0.6
+# Notebooks
+matplotlib==3.10.6
+joblib==1.5.2
+ipykernel==7.1.0
+nbconvert==7.17.1
+# Tests
+pytest==8.4.2
