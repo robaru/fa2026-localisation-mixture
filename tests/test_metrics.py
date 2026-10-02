@@ -1,10 +1,12 @@
+import warnings
+
 import numpy as np
 import pyfar as pf
 import pytest
 
 from metrics import (
     METRIC_FUNCTIONS, localization_error, get_metric_metadata,
-    describe_metrics, querrMiddlebrooks, rmsPmedianlocal, polar_gain,
+    describe_metrics, querrMiddlebrooks, rmsPmedianlocal, polar_gain, sirp_regression,
     wrap_polar_angle,
 )
 
@@ -149,6 +151,64 @@ def test_polar_gain():
     assert polar_gain(pol_t, pol_t, lat) == pytest.approx(1.0)
     assert polar_gain(pol_t, 0.5 * pol_t + 10.0, lat) == pytest.approx(0.5)
     assert np.isnan(polar_gain(pol_t[:3], pol_t[:3], lat[:3]))
+
+
+def test_polar_gain_reselects_responses_across_90():
+    # Front targets answered exactly, plus five overshoots past overhead
+    # (target 80°, response 100°). The SIRP starts from the correct-hemifield
+    # responses, but the overshoots lie 20° from that line and must be
+    # re-selected (Macpherson & Middlebrooks 2003), which steepens the slope.
+    front_t = np.tile([-30.0, 0.0, 30.0, 60.0, 90.0], 5)
+    pol_t = np.concatenate([front_t, np.full(5, 80.0), np.tile([120.0, 150.0, 180.0, 210.0], 5)])
+    pol_r = np.concatenate([front_t, np.full(5, 100.0), np.tile([120.0, 150.0, 180.0, 210.0], 5)])
+    lat = np.zeros_like(pol_t)
+
+    slope, _, selected = sirp_regression(pol_t, pol_r, front=True)
+    assert selected.all()                    # overshoots are back in the fit
+    fit = np.polyfit(pol_t[pol_t <= 90], pol_r[pol_t <= 90], 1)[0]
+    assert slope == pytest.approx(fit)
+    assert slope > 1.0
+    assert polar_gain(pol_t, pol_r, lat) == pytest.approx((slope + 1.0) / 2)
+
+    # Restricting the pool to correct-hemifield responses (the old behaviour)
+    # would have dropped the overshoots and returned a gain of exactly 1.
+    keep = pol_r <= 90
+    assert sirp_regression(pol_t[keep], pol_r[keep], front=True)[0] == pytest.approx(1.0)
+
+
+def test_polar_gain_degenerate_single_target_is_nan():
+    # All correct-hemifield responses belong to one target angle, so the
+    # slope is undefined; this must give NaN, not a minimum-norm slope.
+    pol_t = np.concatenate([np.full(6, 180.0), np.full(3, 120.0), np.full(3, 210.0)])
+    pol_r = np.concatenate([np.full(6, 180.0), np.full(3, 45.0), np.full(3, -30.0)])
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')       # no RankWarning or SIRP warning
+        slope, intercept, _ = sirp_regression(pol_t, pol_r, front=False)
+    assert np.isnan(slope) and np.isnan(intercept)
+
+    front_t = np.tile([-30.0, 0.0, 30.0, 60.0], 2)   # no 90°: it would enter the rear pool
+    lat = np.zeros(len(front_t) + len(pol_t))
+    assert np.isnan(polar_gain(np.concatenate([front_t, pol_t]),
+                               np.concatenate([front_t, pol_r]), lat))
+
+
+def test_sirp_cycle_returns_nan_and_warns():
+    # The selection visits four sets and then returns to the second one.
+    pol_t = [-30.0, 0.0, 30.0, 90.0, -30.0, -30.0]
+    pol_r = [90.0, 20.0, -80.0, 135.0, 105.0, 55.0]
+    with pytest.warns(UserWarning, match='cycles'):
+        slope, intercept, _ = sirp_regression(pol_t, pol_r, front=True, Nmin=3)
+    assert np.isnan(slope) and np.isnan(intercept)
+
+
+def test_sirp_maxiter_returns_nan_and_warns():
+    # Needs two iterations to converge (see the re-selection test above).
+    pol_t = np.concatenate([np.tile([-30.0, 0.0, 30.0, 60.0, 90.0], 5), np.full(5, 80.0)])
+    pol_r = np.concatenate([np.tile([-30.0, 0.0, 30.0, 60.0, 90.0], 5), np.full(5, 100.0)])
+    with pytest.warns(UserWarning, match='maxiter'):
+        assert np.isnan(sirp_regression(pol_t, pol_r, front=True, maxiter=1)[0])
+    with pytest.warns(UserWarning, match='maxiter'):
+        assert np.isnan(polar_gain(pol_t, pol_r, np.zeros_like(pol_t), maxiter=1))
 
 
 def test_gainP_registered_matches_polar_gain(grid_targets):

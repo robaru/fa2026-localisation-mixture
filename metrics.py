@@ -399,36 +399,158 @@ def querrMiddlebrooks(true, est):
     return qerr, {'confusion_count': n_confusions, 'response_count': n_total}
 
 
+def sirp_regression(pol_target_deg, pol_response_deg, front=True,
+                    delta=40.0, Nmin=5, maxiter=100):
+    """
+    One hemifield of the Selective Iterative Regression Procedure (SIRP).
+
+    Implements the procedure of Macpherson & Middlebrooks (2000) as
+    described by Macpherson & Middlebrooks (2003); see :func:`polar_gain`
+    for the references:
+
+    1. The pool is every trial whose *target* lies in the requested
+       hemifield (front: polar target ≤ 90°; rear: polar target ≥ 90°),
+       whatever the hemifield of the response.
+    2. The procedure is initialised with the trials whose response falls in
+       the correct hemifield (front: polar response ≤ 90°; rear: polar
+       response ≥ 90°), and a least-squares line is fitted to them.
+    3. Every pool trial lying closer to the line than ``delta`` (polar
+       deviation wrapped to [-180°, 180°)) is selected and the line is
+       refitted. Trials eliminated in one iteration are available for
+       re-selection in later ones, including responses in the other
+       hemifield.
+    4. Step 3 is repeated until the selected set no longer changes. The
+       returned line is the fit to that converged set.
+
+    Parameters
+    ----------
+    pol_target_deg : array-like
+        Polar target angles in degrees, in [-90°, 270°).
+    pol_response_deg : array-like
+        Polar response angles in degrees, in [-90°, 270°).
+    front : bool
+        If True, analyse the front hemifield, otherwise the rear one.
+    delta : float
+        Selection criterion in degrees (default 40°).
+    Nmin : int
+        Minimum number of selected trials (default 5). The hemifield is
+        rejected (NaN) if the initial set or any later selection is smaller,
+        or if all selected trials share a single target angle.
+    maxiter : int
+        Maximum number of iterations (default 100).
+
+    Returns
+    -------
+    slope : float
+        Regression slope (the hemifield polar gain), or NaN.
+    intercept : float
+        Regression intercept in degrees, or NaN.
+    selected : ndarray of bool
+        Mask over the hemifield pool (the trials with targets in the
+        requested hemifield, in input order) marking the trials of the last
+        selection. Empty if the pool is empty.
+
+    Warns
+    -----
+    UserWarning
+        If the procedure does not converge, either because a selection
+        repeats an earlier one (a cycle) or because ``maxiter`` is reached.
+        Slope and intercept are then NaN.
+    """
+    pol_t = np.asarray(pol_target_deg, dtype=float)
+    pol_r = np.asarray(pol_response_deg, dtype=float)
+
+    # Pool: all responses to targets in this hemifield
+    in_pool = pol_t <= 90.0 if front else pol_t >= 90.0
+    x = pol_t[in_pool]
+    y = pol_r[in_pool]
+
+    # Initial selection: responses in the correct hemifield
+    selected = y <= 90.0 if front else y >= 90.0
+    hemifield = 'front' if front else 'rear'
+    seen = {selected.tobytes()}
+
+    for _ in range(maxiter):
+        # Too few trials, or all at one target so that the slope is undefined
+        if selected.sum() < Nmin or np.ptp(x[selected]) == 0:
+            return np.nan, np.nan, selected
+        A = np.column_stack([np.ones(selected.sum()), x[selected]])
+        (intercept, slope), *_ = np.linalg.lstsq(A, y[selected], rcond=None)
+
+        # Reselect from the whole pool, so that excluded trials can come back
+        dev = (y - (slope * x + intercept) + 180.0) % 360.0 - 180.0
+        new_selected = np.abs(dev) < delta
+        if np.array_equal(new_selected, selected):
+            return float(slope), float(intercept), selected
+
+        key = new_selected.tobytes()
+        if key in seen:
+            warnings.warn(
+                f"SIRP did not converge in the {hemifield} hemifield: the "
+                "selection cycles between sets of trials. Returning NaN.",
+                UserWarning, stacklevel=2)
+            return np.nan, np.nan, new_selected
+        seen.add(key)
+        selected = new_selected
+
+    warnings.warn(
+        f"SIRP did not converge in the {hemifield} hemifield within "
+        f"maxiter={maxiter} iterations. Returning NaN.",
+        UserWarning, stacklevel=2)
+    return np.nan, np.nan, selected
+
+
 def polar_gain(pol_target_deg, pol_response_deg, lat_target_deg,
                lat_cutoff_deg=30.0, delta=40.0, Nmin=5, maxiter=100):
     """
     Polar gain (gainP) via the Selective Iterative Regression Procedure (SIRP).
 
-    Computes the average of frontal and rear polar gain as defined in
-    Macpherson & Middlebrooks (2000). The SIRP iteratively excludes outliers
-    and reversals to obtain a robust linear regression slope.
+    Average of the front and rear polar gains, each the slope of a robust
+    regression of polar response on polar target obtained with the SIRP of
+    Macpherson & Middlebrooks (2000), following the description in
+    Macpherson & Middlebrooks (2003). Only trials with
+    ``|lat_target| <= lat_cutoff_deg`` are used. The front (polar target in
+    [-90°, 90°]) and rear (polar target in [90°, 270°)) hemifields are
+    analysed separately with :func:`sirp_regression`: the regression is
+    initialised on the responses in the correct hemifield and then refitted
+    on all trials of the hemifield lying within ``delta`` of the line, until
+    the selection converges. Responses that crossed into the other
+    hemifield, for example an overshoot past 90° for a target near
+    overhead, are re-selected when the line comes close to them.
 
     Parameters
     ----------
     pol_target_deg : array-like
-        Polar target angles in degrees.
+        Polar target angles in degrees, in [-90°, 270°).
     pol_response_deg : array-like
-        Polar response angles in degrees.
+        Polar response angles in degrees, in [-90°, 270°).
     lat_target_deg : array-like
         Lateral target angles in degrees. Used to filter central targets.
     lat_cutoff_deg : float
         Lateral cutoff for central targets (default 30°).
     delta : float
-        Outlier tolerance in degrees (default 40°).
+        Selection criterion in degrees (default 40°).
     Nmin : int
-        Minimum number of inliers required for regression (default 5).
+        Minimum number of selected trials per hemifield (default 5).
     maxiter : int
-        Maximum number of SIRP iterations (default 100).
+        Maximum number of SIRP iterations per hemifield (default 100).
 
     Returns
     -------
     float
-        gainP = (gainPfront + gainPrear) / 2, or NaN if insufficient data.
+        gainP = (gainPfront + gainPrear) / 2. NaN if either hemifield has
+        fewer than ``Nmin`` selected trials or its SIRP does not converge
+        (a ``UserWarning`` is emitted in the latter case).
+
+    References
+    ----------
+    Macpherson, E. A., & Middlebrooks, J. C. (2000). Localization of brief
+    sounds: Effects of level and background noise. J. Acoust. Soc. Am.
+    108(4), 1834-1849.
+
+    Macpherson, E. A., & Middlebrooks, J. C. (2003). Vertical-plane sound
+    localization probed with ripple-spectrum noise. J. Acoust. Soc. Am.
+    114(1), 430-445.
     """
     pol_t = np.asarray(pol_target_deg,   dtype=float)
     pol_r = np.asarray(pol_response_deg, dtype=float)
@@ -439,44 +561,9 @@ def polar_gain(pol_target_deg, pol_response_deg, lat_target_deg,
     pol_t = pol_t[central]
     pol_r = pol_r[central]
 
-    gains = []
-    for is_front in (True, False):
-        # Pool = correct-hemifield responses only (paper section 6)
-        if is_front:
-            correct = (pol_t <= 90.0) & (pol_r <= 90.0)
-        else:
-            correct = (pol_t >= 90.0) & (pol_r >= 90.0)
-
-        x = pol_t[correct]
-        y = pol_r[correct]
-
-        if len(x) < Nmin:
-            gains.append(np.nan)
-            continue
-
-        # SIRP: start with all correct-hemifield responses, iterate until convergence.
-        # new_inliers is evaluated on the full pool each step, so previously excluded
-        # points are automatically available for re-selection (paper section 6).
-        inliers = np.ones(len(x), dtype=bool)
-        for _ in range(maxiter):
-            A = np.column_stack([np.ones(inliers.sum()), x[inliers]])
-            b, _, _, _ = np.linalg.lstsq(A, y[inliers], rcond=None)
-            yhat = b[1] * x + b[0]
-            dev = (y - yhat + 180.0) % 360.0 - 180.0
-            new_inliers = np.abs(dev) < delta
-            if np.array_equal(new_inliers, inliers):
-                break
-            inliers = new_inliers
-            if inliers.sum() < Nmin:
-                break
-
-        if inliers.sum() < Nmin:
-            gains.append(np.nan)
-            continue
-
-        A_final = np.column_stack([np.ones(inliers.sum()), x[inliers]])
-        b_final, _, _, _ = np.linalg.lstsq(A_final, y[inliers], rcond=None)
-        gains.append(b_final[1])
+    gains = [sirp_regression(pol_t, pol_r, front=front, delta=delta,
+                             Nmin=Nmin, maxiter=maxiter)[0]
+             for front in (True, False)]
 
     if any(np.isnan(g) for g in gains):
         return np.nan
@@ -491,8 +578,10 @@ def polar_gain(pol_target_deg, pol_response_deg, lat_target_deg,
     description=(
         "Polar gain via the Selective Iterative Regression Procedure (SIRP).\n\t"
         "Average of frontal and rear polar gain slopes as defined in\n\t"
-        "Macpherson & Middlebrooks (2000). Fitted on central targets\n\t"
-        "(|lat_target| ≤ 30°). Returns NaN if insufficient data."),
+        "Macpherson & Middlebrooks (2000), procedure as described in\n\t"
+        "Macpherson & Middlebrooks (2003). Fitted on central targets\n\t"
+        "(|lat_target| ≤ 30°). Returns NaN if insufficient data or if the\n\t"
+        "procedure does not converge."),
     ylabel="Polar gain",
 )
 def gainP(true, est, lat_cutoff_deg=30.0, delta=40.0, Nmin=5, maxiter=100):
