@@ -189,3 +189,4 @@ cython_debug/
 *.pdf
 figures/*
 !figures/fig_params_vs_classical.png
+!figures/fig_metric_failures.png

@@ -1,25 +1,39 @@
 # fa2026-localisation-mixture
 
-A probabilistic mixture model for evaluating sound localisation performance in
-the median plane, together with the classical localisation metrics it is
-compared against.
-
-Companion code for
-
-> J. Sztandera, L. Picinali and R. Barumerli, "A Probabilistic Mixture Model
-> for Evaluating Sound Localisation Performance in the Median Plane",
-> *Proceedings of Forum Acusticum 2026*, Graz.
-
 [![tests](https://github.com/robaru/fa2026-localisation-mixture/actions/workflows/ci.yml/badge.svg)](https://github.com/robaru/fa2026-localisation-mixture/actions/workflows/ci.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
-## The model
+A probabilistic mixture model for sound localisation in the median plane.
+Companion code for J. Sztandera, L. Picinali and R. Barumerli, *A Probabilistic
+Mixture Model for Evaluating Sound Localisation Performance in the Median
+Plane*, Forum Acusticum 2026, Graz.
 
-Median-plane localisation is usually summarised with threshold-based metrics:
-polar error (responses within 90° of the target), quadrant error rate
-(responses beyond 90°) and polar gain. Each discards part of the data and
-compresses individual differences. This repository fits the *whole* polar
-response distribution instead.
+> [!TIP]
+> **IMPORTANT — polar gain fix (October 2026).** The selective iterative regression behind `polar_gain()` / `gainP` never re-selected responses that crossed into the other hemifield (e.g. overshoots past 90° for targets near overhead), contrary to Macpherson & Middlebrooks (2003). Polar gain was therefore underestimated: 18 of the 33 AXD listeners in [04](04_axd_prior.ipynb) change, all upwards, by 0.11 on average (up to 0.35).
+> `polar_gain()` now follows the paper and notebooks 04 and 05 have been re-run. In 04 the link between σ_P and polar gain still holds: Pearson r = 0.69 → 0.63 (p < .001), Spearman ρ = 0.68 → 0.70.
+
+## Why
+
+Median-plane localisation is usually summarised by polar error (PE), quadrant
+error (QE) and polar gain. Each is computed after a hard threshold on the
+responses, so none of them reads out a single property of the listener:
+
+![Expected classical metrics over the model parameters](figures/fig_metric_failures.png)
+
+- **a** PE drops every error beyond 90°, so it follows the response scatter only
+  up to about 30° and then saturates.
+- **b** QE counts scatter as front–back confusions: its contours bend, so the
+  same QE comes from few confusions with large scatter or many confusions with
+  little scatter.
+- **c** Polar gain cannot tell a precise listener pulled towards the horizon
+  from an imprecise listener with a weaker pull.
+
+The mixture model fits the whole polar response distribution instead and
+recovers confusions, scatter and the pull towards the horizon as separate
+parameters. The simulations are in
+[05_metric_failure_cases.ipynb](05_metric_failure_cases.ipynb).
+
+## The model
 
 For a target at polar angle φ_t, the response φ follows
 
@@ -27,123 +41,61 @@ For a target at polar angle φ_t, the response φ follows
 p(φ | φ_t) ∝ [ w·VM(φ; φ_t, κ) + (1 − w)·VM(φ; π − φ_t, κ) ] × [ ½·VM(φ; 0, κ_P) + ½·VM(φ; π, κ_P) ]
 ```
 
-where VM is the von Mises density. The three parameters are interpretable:
+where VM is the von Mises density.
 
-| Parameter | Reported as | Meaning | Classical counterpart |
+| Parameter | Reported as | Meaning | Replaces |
 |---|---|---|---|
-| w | confusion rate 1 − w | probability of responding in the correct front/back hemifield | quadrant error rate |
-| κ | σ (degrees) | precision of the polar response | polar error |
-| κ_P | σ_P (degrees) | strength of a spatial prior pulling responses towards the horizontal plane (large σ_P = flat prior) | polar gain |
+| w | confusion rate 1 − w | probability of responding in the correct front/back hemifield | quadrant error |
+| κ | σ (degrees) | scatter of the polar response | polar error |
+| κ_P | σ_P (degrees) | width of a prior pulling responses towards the horizontal plane | polar gain |
 
-The product of von Mises densities is itself a mixture of four von Mises
-components (von Mises addition theorem), so the likelihood is analytic and a
-fit takes a fraction of a second with [pyBADS](https://github.com/acerbilab/pybads).
+The likelihood is analytic (a product of von Mises densities is a mixture of
+von Mises densities), so a fit with
+[pyBADS](https://github.com/acerbilab/pybads) takes a fraction of a second.
 With κ_P → 0 the model reduces to the two-parameter mixture (w, κ).
 
-## Install
+## Quickstart
 
 ```bash
 git clone https://github.com/robaru/fa2026-localisation-mixture.git
 cd fa2026-localisation-mixture
-pip install -r requirements.txt        # or: conda env create -f environment.yml
-pytest                                  # optional, a few seconds
+pip install -r requirements.txt        # Python ≥ 3.11; or: conda env create -f environment.yml
 ```
-
-Python 3.11 or newer. The code is two plain modules, `bayesian_metric.py`
-(the mixture model) and `metrics.py` (the metric registry and the classical
-metrics), so run scripts and notebooks from the repository root.
-`metrics.py` is borrowed from the
-[bayesian_listener](https://github.com/robaru/bayesian_listener) package and
-trimmed to the metrics used in this repository.
-
-## Quickstart
-
-Fit the model to a table of trials. Angles are in degrees, in horizontal-polar
-coordinates (lateral angle in [−90, 90], polar angle in [−90, 270), with 0 in
-front, 90 above and 180 behind the listener):
 
 ```python
 import pandas as pd
-from bayesian_metric import fit_mixture_with_prior, fit_mixture_querr
+from bayesian_metric import fit_mixture_with_prior
 
 df = pd.read_csv('data/AXD_measured.csv')
-df = df[df['participant'] == 'P0181']
-
-fit = fit_mixture_with_prior(df)   # uses columns lat_target, pol_target, pol_response
+fit = fit_mixture_with_prior(df[df['participant'] == 'P0181'])
 print(f"confusions {fit['confusion_pct']:.1f} %  sigma {fit['sigma_hat']:.1f} deg  "
       f"sigma_prior {fit['sigma_prior_hat']:.1f} deg  (n = {fit['n_trials']})")
 # confusions 20.5 %  sigma 18.3 deg  sigma_prior 18.1 deg  (n = 123)
-
-fit2 = fit_mixture_querr(df)       # two-parameter model without the prior
 ```
 
-Only trials with a lateral target within ±30° are used (`lat_cutoff_deg`).
-
-The same fit and the classical metrics are available through a metric
-registry that works on `pyfar.Coordinates`, so that coordinate conventions
-and units are handled for you:
-
-```python
-import numpy as np
-import pyfar as pf
-from metrics import localization_error, describe_metrics
-
-targets = pf.Coordinates.from_spherical_side(
-    np.deg2rad(df['lat_target'].to_numpy()), np.deg2rad(df['pol_target'].to_numpy()), 1)
-responses = pf.Coordinates.from_spherical_side(
-    np.deg2rad(df['lat_response'].to_numpy()), np.deg2rad(df['pol_response'].to_numpy()), 1)
-
-qe, aux = localization_error(targets, responses, 'querrMiddlebrooks', auxiliary_output=True)
-pe = np.rad2deg(localization_error(targets, responses, 'rmsPmedianlocal'))
-gain = localization_error(targets, responses, 'gainP')
-w_hat, sigma_hat, sigma_prior_hat = localization_error(targets, responses, 'mixture_model')
-
-describe_metrics()                  # print every registered metric
-```
-
-### Registered metrics
-
-| Name | Coordinates | Output | Description |
-|---|---|---|---|
-| `mixture_model` | horizontal-polar | [w, σ, σ_P] | Von Mises mixture fit (this paper); `use_prior=False` for the two-parameter model |
-| `querrMiddlebrooks` | horizontal-polar | % | Quadrant error rate: polar error ≥ 90° for lateral responses within ±30° (Middlebrooks 1999) |
-| `rmsPmedianlocal` | horizontal-polar | rad | Local polar RMS error: lateral within ±30°, polar error < 90° (Middlebrooks 1999) |
-| `gainP` | horizontal-polar | – | Polar gain via the selective iterative regression procedure (Macpherson and Middlebrooks 2000) |
-| `accP_cutoff` | horizontal-polar | rad | Polar bias (mean signed error) for lateral responses within ±`cutoff` (default 30°) |
-
-These are the metrics used in the paper. The upstream
-[bayesian_listener](https://github.com/robaru/bayesian_listener) package
-provides the complete set (lateral error and bias, elevation error,
-great-circle error, and more) behind the same registry. You can also pass
-your own callable to `localization_error`, or register a new metric with the
-`@register_metric` decorator.
+Angles are in degrees in horizontal-polar coordinates (0 in front, 90 above,
+180 behind); only targets within ±30° lateral are used. `fit_mixture_querr`
+fits the two-parameter model. The same fit and the classical metrics are also
+available on `pyfar.Coordinates` through `metrics.localization_error(targets,
+responses, 'mixture_model')`; `metrics.describe_metrics()` lists them all.
+`metrics.py` is a trimmed copy of the one in
+[bayesian_listener](https://github.com/robaru/bayesian_listener).
 
 ## Reproducing the paper
 
-The notebooks run from the repository root on the bundled data
-(`data/AXD_measured.csv`, see [data/README.md](data/README.md)). Their outputs
-are committed, so they render on GitHub without running anything. Notebooks 02
-to 04 fit all listeners in parallel with joblib and take a few minutes each.
+Run the notebooks from the repository root. Outputs are committed, so they
+render on GitHub as they are.
 
 | Notebook | Content |
 |---|---|
-| [01_axd_behavioral_metrics.ipynb](01_axd_behavioral_metrics.ipynb) | Classical metrics and the two-parameter mixture fit for every listener; parameter recovery on synthetic listeners |
-| [02_saturation_analysis.ipynb](02_saturation_analysis.ipynb) | Why local polar error saturates at high polar scatter while the mixture σ does not |
-| [03_prior_recovery.ipynb](03_prior_recovery.ipynb) | Joint recovery of (w, κ, κ_P) from synthetic listeners drawn with a Latin hypercube design |
-| [04_axd_prior.ipynb](04_axd_prior.ipynb) | Three-parameter fit to the 33 AXD listeners, model comparison by BIC, and the relation between σ_P and polar gain |
-| [05_metric_failure_cases.ipynb](05_metric_failure_cases.ipynb) | Synthetic listeners that quadrant error and polar error cannot tell apart, but the mixture model can |
+| [01](01_axd_behavioral_metrics.ipynb) | Classical metrics and the two-parameter fit for every AXD listener; parameter recovery |
+| [02](02_saturation_analysis.ipynb) | Why polar error saturates while σ does not |
+| [03](03_prior_recovery.ipynb) | Recovery of (w, κ, κ_P) from synthetic listeners |
+| [04](04_axd_prior.ipynb) | Three-parameter fit to the AXD listeners, BIC comparison, σ_P against polar gain |
+| [05](05_metric_failure_cases.ipynb) | Synthetic listeners the classical metrics cannot tell apart; the figure above |
 
-![Mixture parameters against classical metrics](figures/fig_params_vs_classical.png)
-
-`matlab/visualise_models.m` plots the response distributions of the two
-models for a chosen set of parameters.
-
-## Data
-
-`data/AXD_measured.csv` holds the *Measured* condition of the AXD localisation
-dataset (5742 trials, 34 listeners) collected at Imperial College London. See
-[data/README.md](data/README.md) for the column glossary, provenance and how
-the file was extracted from the full dataset.
+The data are the *Measured* condition of the AXD dataset (Imperial College
+London, 34 listeners, 5742 trials); see [data/README.md](data/README.md).
 
 ## Citation
 
@@ -157,21 +109,6 @@ the file was extracted from the full dataset.
 }
 ```
 
-A machine-readable citation is in [CITATION.cff](CITATION.cff).
-
-## Funding
-
-This work was supported by the Marie Skłodowska-Curie Postdoctoral Fellowship
-MIA (project No. 101201118) and by the Horizon 2020 project SONICOM (grant
-agreement No. 101017743).
-
-## Known issues
-
-- pybads 1.0.6 emits `DeprecationWarning`s with numpy 2.x. They are harmless
-  and filtered in the test configuration.
-- `localization_error` supports `pyfar.Coordinates` with a one-dimensional
-  `cshape` only.
-
-## License
-
-GPL-3.0, see [LICENSE](LICENSE).
+Supported by the Marie Skłodowska-Curie Postdoctoral Fellowship MIA (No.
+101201118) and the Horizon 2020 project SONICOM (No. 101017743). Licensed under
+[GPL-3.0](LICENSE).
